@@ -38,7 +38,7 @@ jobs:
 
       - name: Lint Shell Scripts
         run: |
-          shellcheck install.sh uninstall.sh
+          shellcheck -S error install.sh uninstall.sh
 
       - name: Publish Build Summary
         run: |
