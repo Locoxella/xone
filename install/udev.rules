@@ -1,0 +1,3 @@
+# Rebind Microsoft Xbox One (GIP) wired devices from xpad to xone-wired so
+# mainline xpad can remain loaded for Xbox 360 and third-party gamepads.
+ACTION=="add|bind", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_interface", DRIVER=="xpad", ATTRS{idVendor}=="045e", ATTR{bInterfaceClass}=="ff", ATTR{bInterfaceSubClass}=="47", ATTR{bInterfaceProtocol}=="d0", ATTR{bInterfaceNumber}=="00", RUN+="/bin/sh -c 'modprobe -q xone_wired && echo %k > /sys/bus/usb/drivers/xpad/unbind 2>/dev/null; echo %k > /sys/bus/usb/drivers/xone-wired/bind 2>/dev/null || true'"

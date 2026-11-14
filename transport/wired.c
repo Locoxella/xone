@@ -5,6 +5,7 @@
 
 #include <linux/module.h>
 #include <linux/slab.h>
+#include <linux/string.h>
 #include <linux/usb.h>
 
 #include "../bus/bus.h"
@@ -470,17 +471,84 @@ static int xone_wired_init_audio_port(struct xone_wired *wired)
 	return 0;
 }
 
+static char *allow_vendors = "045e,1038";
+module_param(allow_vendors, charp, 0644);
+MODULE_PARM_DESC(allow_vendors,
+		 "Comma-separated hex vendor IDs to bind (default: 045e,1038; use 'all' for all)");
+
+static char *deny_vendors = "";
+module_param(deny_vendors, charp, 0644);
+MODULE_PARM_DESC(deny_vendors,
+		 "Comma-separated hex vendor IDs to ignore");
+
+static bool xone_wired_vid_in_list(const char *list, u16 vendor)
+{
+	char *dup, *cur, *tok;
+	bool match = false;
+	u16 vid;
+
+	if (!list || !*list)
+		return false;
+
+	dup = kstrdup(list, GFP_KERNEL);
+	if (!dup)
+		return false;
+
+	cur = dup;
+	while ((tok = strsep(&cur, ",")) != NULL) {
+		tok = strim(tok);
+		if (!*tok)
+			continue;
+
+		if (!strcmp(tok, "*") || !strcasecmp(tok, "all")) {
+			match = true;
+			break;
+		}
+
+		if (tok[0] == '0' && (tok[1] == 'x' || tok[1] == 'X'))
+			tok += 2;
+
+		if (!kstrtou16(tok, 16, &vid) && vid == vendor) {
+			match = true;
+			break;
+		}
+	}
+
+	kfree(dup);
+	return match;
+}
+
+static bool xone_wired_vendor_allowed(u16 vendor)
+{
+	if (xone_wired_vid_in_list(deny_vendors, vendor))
+		return false;
+
+	if (allow_vendors && *allow_vendors)
+		return xone_wired_vid_in_list(allow_vendors, vendor);
+
+	return true;
+}
+
 static int xone_wired_probe(struct usb_interface *intf,
 			    const struct usb_device_id *id)
 {
+	struct usb_device *udev = interface_to_usbdev(intf);
+	u16 vendor = le16_to_cpu(udev->descriptor.idVendor);
 	struct xone_wired *wired;
 	int err;
+
+	if (!xone_wired_vendor_allowed(vendor)) {
+		dev_dbg(&intf->dev,
+			"ignoring vendor 0x%04x (filtered by module parameters)\n",
+			vendor);
+		return -ENODEV;
+	}
 
 	wired = devm_kzalloc(&intf->dev, sizeof(*wired), GFP_KERNEL);
 	if (!wired)
 		return -ENOMEM;
 
-	wired->udev = interface_to_usbdev(intf);
+	wired->udev = udev;
 
 	/* newer devices require a reset after system sleep */
 	usb_reset_device(wired->udev);
