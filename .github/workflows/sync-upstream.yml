@@ -22,7 +22,7 @@ jobs:
       TARGET_BRANCH: ${{ inputs.branch || 'feat/xpad-coexistence' }}
     steps:
       - name: Checkout Fork Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: master
           fetch-depth: 0

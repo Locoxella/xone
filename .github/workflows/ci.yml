@@ -15,19 +15,20 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Kernel Headers & Lint Tools
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential \
-            "linux-headers-$(uname -r)" \
+            linux-headers-generic \
             shellcheck
 
       - name: Build Kernel Modules
         run: |
-          KVER=$(uname -r)
+          KDIR=$(ls -d /usr/src/linux-headers-*-generic | sort -V | tail -n 1)
+          KVER=$(basename "$KDIR" | sed 's/^linux-headers-//')
           make -j"$(nproc)" KVERSION="$KVER"
           BUILT_COUNT=$(find . -maxdepth 2 -name '*.ko' | wc -l)
           BUILT_LIST=$(find . -maxdepth 2 -name '*.ko' | sort | tr '\n' ' ')
