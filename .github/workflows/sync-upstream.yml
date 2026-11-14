@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   sync-and-rebase:
@@ -29,6 +30,8 @@ jobs:
 
       - name: Sync Master & Rebase Feature Branch
         id: sync
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -65,6 +68,7 @@ jobs:
               AFTER_FEATURE=$(git rev-parse --short HEAD)
               git push origin "$TARGET_BRANCH" --force-with-lease
               REBASE_STATUS="rebased (${BEFORE_FEATURE} -> ${AFTER_FEATURE})"
+              gh workflow run publish-rpm.yml --ref "$TARGET_BRANCH" || true
             else
               git rebase --abort || true
               REBASE_STATUS="conflict (aborted; manual resolution required)"
