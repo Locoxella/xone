@@ -27,8 +27,12 @@ while [[ -n $version ]]; do
 done
 
 rm -rf /usr/src/xone* || true
-rm -rf /etc/modprobe.d/xone-blacklist.conf || true
+rm -rf /etc/modprobe.d/xone.conf /etc/modprobe.d/xone-blacklist.conf || true
+rm -rf /etc/udev/rules.d/50-xone.rules || true
 rm -rf /var/lib/dkms/xone* || true
+if [ -x "$(command -v udevadm)" ]; then
+    udevadm control --reload-rules || true
+fi
 echo -e "All xone versions removed\n"
 
 [[ ${1:-} == "--no-firmware" ]] && exit 0

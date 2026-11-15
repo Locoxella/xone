@@ -1,0 +1,117 @@
+name: Publish DNF RPM Repo
+
+on:
+  push:
+    branches:
+      - feat/xpad-coexistence
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-rpm-repo:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Compute Monotonic Version
+        id: ver
+        run: |
+          BASE_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.5.8")
+          VERSION="${BASE_TAG#v}"
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          RELEASE="${COMMIT_COUNT}.g${SHORT_SHA}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "release=${RELEASE}" >> "$GITHUB_OUTPUT"
+
+      - name: Build DKMS RPM & DNF Metadata in Fedora 44
+        run: |
+          mkdir -p _repo _tarball/xone-${{ steps.ver.outputs.version }}
+          cp -a auth bus driver transport install dkms.conf Kbuild Makefile LICENSE \
+            "_tarball/xone-${{ steps.ver.outputs.version }}/"
+          tar -czf "_tarball/xone-${{ steps.ver.outputs.version }}.tar.gz" \
+            -C _tarball "xone-${{ steps.ver.outputs.version }}"
+
+          docker run --rm \
+            -v "$PWD:/work" \
+            -e RPM_VERSION="${{ steps.ver.outputs.version }}" \
+            -e RPM_RELEASE="${{ steps.ver.outputs.release }}" \
+            fedora:44 bash -euo pipefail -c '
+              dnf install -y --setopt=install_weak_deps=False rpm-build createrepo_c
+              mkdir -p /root/rpmbuild/{SOURCES,SPECS,RPMS,SRPMS}
+              cp "/work/_tarball/xone-${RPM_VERSION}.tar.gz" /root/rpmbuild/SOURCES/
+              cp /work/packaging/xone-dkms.spec /root/rpmbuild/SPECS/
+              rpmbuild -bb \
+                --define "_version ${RPM_VERSION}" \
+                --define "_release ${RPM_RELEASE}" \
+                /root/rpmbuild/SPECS/xone-dkms.spec
+              cp /root/rpmbuild/RPMS/noarch/*.rpm /work/_repo/
+              createrepo_c /work/_repo
+            '
+
+          cat <<'EOF' > _repo/xone.repo
+          [locoxella-xone]
+          name=Locoxella xone (xpad-coexistence)
+          baseurl=https://locoxella.github.io/xone/
+          enabled=1
+          gpgcheck=0
+          repo_gpgcheck=0
+          EOF
+
+          RPM_FILE=$(basename "$(ls _repo/*.rpm | head -n 1)")
+          echo "rpm_file=${RPM_FILE}" >> "$GITHUB_ENV"
+
+          cat <<EOF > _repo/index.html
+          <!doctype html>
+          <html>
+          <head><meta charset="utf-8"><title>Locoxella xone DNF Repo</title></head>
+          <body>
+            <h1>Locoxella xone DNF Repository</h1>
+            <p>Latest package: <code>${RPM_FILE}</code></p>
+            <pre>sudo curl -fsSL https://locoxella.github.io/xone/xone.repo -o /etc/yum.repos.d/xone.repo &amp;&amp; sudo dnf install -y xone-dkms</pre>
+          </body>
+          </html>
+          EOF
+
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _repo
+
+      - name: Publish Summary
+        run: |
+          REPORT=$(cat <<EOF
+          ### DNF RPM Build Summary
+          - **Package**: \`${rpm_file}\`
+          - **Version / Release**: \`${{ steps.ver.outputs.version }}-${{ steps.ver.outputs.release }}\`
+          - **Repo URL**: \`https://locoxella.github.io/xone/\`
+          EOF
+          )
+          echo "$REPORT"
+          echo "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=RPM Built::${rpm_file}"
+
+  deploy:
+    needs: build-rpm-repo
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

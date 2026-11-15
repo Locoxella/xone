@@ -53,12 +53,15 @@ if [ "${1:-}" == --debug ]; then
 fi
 
 if dkms install -m xone -v "$version" --force; then
-    # The blacklist should be placed in /usr/local/lib/modprobe.d for kmod 29+
-    install -D -m 644 install/modprobe.conf /etc/modprobe.d/xone-blacklist.conf
+    # The modprobe config should be placed in /usr/local/lib/modprobe.d for kmod 29+
+    rm -f /etc/modprobe.d/xone-blacklist.conf
+    install -D -m 644 install/modprobe.conf /etc/modprobe.d/xone.conf
+    install -D -m 644 install/udev.rules /etc/udev/rules.d/50-xone.rules
 
-    # Avoid conflicts between xpad and xone
-    if lsmod | grep -q '^xpad'; then
-        modprobe -r xpad
+    if [ -x "$(command -v udevadm)" ]; then
+        udevadm control --reload-rules
+        udevadm trigger --subsystem-match=usb --attr-match=bInterfaceClass=ff \
+            --attr-match=bInterfaceSubClass=47 --attr-match=bInterfaceProtocol=d0 || true
     fi
 
     # Avoid conflicts between mt76x2u and xone

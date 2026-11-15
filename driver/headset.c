@@ -401,7 +401,11 @@ static void gip_headset_register(struct work_struct *work)
 		return;
 
 	dev_dbg(&client->dev, "%s: init pcm device.\n", __func__);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 4, 0)
 	err = snd_card_free_on_error(&client->dev, gip_headset_init_pcm(headset));
+#else
+	err = gip_headset_init_pcm(headset);
+#endif
 	if (err) {
 		dev_err(&client->dev, "%s: init PCM failed: %d\n",
 			__func__, err);

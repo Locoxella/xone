@@ -1,0 +1,54 @@
+name: CI Build Check
+
+on:
+  push:
+    branches:
+      - master
+      - 'feat/**'
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  build-modules:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+
+      - name: Install Kernel Headers & Lint Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            linux-headers-generic \
+            shellcheck
+
+      - name: Build Kernel Modules
+        run: |
+          KDIR=$(ls -d /usr/src/linux-headers-*-generic | sort -V | tail -n 1)
+          KVER=$(basename "$KDIR" | sed 's/^linux-headers-//')
+          make -j"$(nproc)" KVERSION="$KVER"
+          BUILT_COUNT=$(find . -maxdepth 2 -name '*.ko' | wc -l)
+          BUILT_LIST=$(find . -maxdepth 2 -name '*.ko' | sort | tr '\n' ' ')
+          echo "BUILT_COUNT=$BUILT_COUNT" >> "$GITHUB_ENV"
+          echo "BUILT_LIST=$BUILT_LIST" >> "$GITHUB_ENV"
+          echo "KVER=$KVER" >> "$GITHUB_ENV"
+
+      - name: Lint Shell Scripts
+        run: |
+          shellcheck -S error install.sh uninstall.sh
+
+      - name: Publish Build Summary
+        run: |
+          REPORT=$(cat <<EOF
+          ### xone Kernel Module Build Summary
+          - **Kernel Headers**: \`${KVER}\`
+          - **Built Modules (${BUILT_COUNT})**: \`${BUILT_LIST}\`
+          - **ShellCheck**: Passed (\`install.sh\`, \`uninstall.sh\`)
+          EOF
+          )
+          echo "$REPORT"
+          echo "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Build Passed::Built ${BUILT_COUNT} modules against ${KVER}"

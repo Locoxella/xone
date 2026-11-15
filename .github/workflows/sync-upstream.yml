@@ -1,0 +1,95 @@
+name: Sync Upstream & Rebase Feature Branch
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Feature branch to rebase onto upstream/master'
+        required: false
+        default: 'feat/xpad-coexistence'
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  sync-and-rebase:
+    runs-on: ubuntu-24.04
+    env:
+      UPSTREAM_REPO: https://github.com/dlundqvist/xone.git
+      UPSTREAM_BRANCH: master
+      TARGET_BRANCH: ${{ inputs.branch || 'feat/xpad-coexistence' }}
+    steps:
+      - name: Checkout Fork Repository
+        uses: actions/checkout@v6
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Sync Master & Rebase Feature Branch
+        id: sync
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream "$UPSTREAM_REPO" 2>/dev/null || git remote set-url upstream "$UPSTREAM_REPO"
+          git fetch upstream "$UPSTREAM_BRANCH" --tags
+          git fetch origin "$TARGET_BRANCH"
+
+          BEFORE_MASTER=$(git rev-parse --short origin/master)
+          UPSTREAM_SHA=$(git rev-parse --short "upstream/${UPSTREAM_BRANCH}")
+
+          # Fast-forward fork master if possible
+          MASTER_STATUS="up-to-date"
+          if [ "$(git rev-parse origin/master)" != "$(git rev-parse upstream/${UPSTREAM_BRANCH})" ]; then
+            if git merge-base --is-ancestor origin/master "upstream/${UPSTREAM_BRANCH}"; then
+              git checkout -B master "upstream/${UPSTREAM_BRANCH}"
+              git push origin master
+              MASTER_STATUS="fast-forwarded (${BEFORE_MASTER} -> ${UPSTREAM_SHA})"
+            else
+              MASTER_STATUS="diverged (skipped fast-forward)"
+            fi
+          fi
+          AFTER_MASTER=$(git rev-parse --short "upstream/${UPSTREAM_BRANCH}")
+
+          # Rebase feature branch onto upstream/master
+          BEFORE_FEATURE=$(git rev-parse --short "origin/${TARGET_BRANCH}")
+          git checkout -B "$TARGET_BRANCH" "origin/${TARGET_BRANCH}"
+
+          REBASE_STATUS="up-to-date"
+          if git merge-base --is-ancestor "upstream/${UPSTREAM_BRANCH}" HEAD; then
+            REBASE_STATUS="already-rebased"
+          else
+            if git rebase "upstream/${UPSTREAM_BRANCH}"; then
+              AFTER_FEATURE=$(git rev-parse --short HEAD)
+              git push origin "$TARGET_BRANCH" --force-with-lease
+              REBASE_STATUS="rebased (${BEFORE_FEATURE} -> ${AFTER_FEATURE})"
+              gh workflow run publish-rpm.yml --ref "$TARGET_BRANCH" || true
+            else
+              git rebase --abort || true
+              REBASE_STATUS="conflict (aborted; manual resolution required)"
+              echo "::error title=Rebase Conflict::Failed to rebase ${TARGET_BRANCH} onto upstream/${UPSTREAM_BRANCH}"
+            fi
+          fi
+          AFTER_FEATURE=${AFTER_FEATURE:-$(git rev-parse --short HEAD)}
+
+          REPORT=$(cat <<EOF
+          ### Upstream Sync & Rebase Report
+          | Target | Before | After | Status |
+          | :--- | :--- | :--- | :--- |
+          | \`master\` | \`${BEFORE_MASTER}\` | \`${AFTER_MASTER}\` | ${MASTER_STATUS} |
+          | \`${TARGET_BRANCH}\` | \`${BEFORE_FEATURE}\` | \`${AFTER_FEATURE}\` | ${REBASE_STATUS} |
+          EOF
+          )
+          echo "$REPORT"
+          echo "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$REBASE_STATUS" == conflict* ]]; then
+            exit 1
+          fi
+
+          echo "::notice title=Upstream Sync Complete::master=${MASTER_STATUS}; ${TARGET_BRANCH}=${REBASE_STATUS}"
